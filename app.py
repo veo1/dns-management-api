@@ -114,7 +114,6 @@ app.route('/delete-dns', methods=['DELETE'])
 @limiter.limit("10 per minute")
 def delete_dns():
     data = request.get_json()
-    print(data)
     logger.info(f"Received request: {data}")
 
     # Validate input data
