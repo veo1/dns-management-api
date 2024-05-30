@@ -50,37 +50,11 @@ DEBUG_MODE = os.getenv('DEBUG_MODE', 'False').lower() == 'true'
 @limiter.limit("10 per minute")  
 def update_dns():
     data = request.get_json()
-    
     logger.info(f"Received request: {data}")
 
-    # Validate input data
-    v = Validator(schema)
-    if not v.validate(data):
-        logger.error(f"Input validation failed: {v.errors}")
-        return jsonify({'error': 'Invalid input', 'details': v.errors}), 400
-
-    # Validate the request token
-    token = data.get('token')
-    if token != SECRET_TOKEN:
-        logger.warning(f"Unauthorized access attempt with token: {token}")
-        return jsonify({'error': 'Invalid token'}), 403
-
-    dns_name = data.get('dns_name')
-    ip_address = data.get('ip_address')
-    
-   # If IP address is missing, look it up using the DNS name
-    if dns_name and not ip_address:
-        try:
-            ip_address = get_ip_address(dns_name)
-        except Exception as e:
-            logger.error(f"Failed to get IP address for DNS name {dns_name}: {e}")
-        return jsonify({'error': f'Failed to get IP address for DNS name {dns_name}'}), 400
-    elif ip_address and not dns_name:
-        try:
-            dns_name = get_host_name(ip_address)
-        except Exception as e:
-            logger.error(f"Failed to get DNS name for IP address {ip_address}: {e}")
-        return jsonify({'error': f'Failed to get DNS name for IP address {ip_address}'}), 400
+    dns_name, ip_address, status, error_response = check_data(data)
+    if status != 200:
+        return jsonify(error_response), status
     
     # Upsert DNS record
     try:
@@ -110,40 +84,15 @@ def update_dns():
         logger.error(f"Unexpected error updating DNS record: {str(e)}")
         return jsonify({'error': 'Internal server error'}), 500
 
-app.route('/delete-dns', methods=['DELETE'])
+@app.route('/delete-dns', methods=['DELETE'])
 @limiter.limit("10 per minute")
 def delete_dns():
     data = request.get_json()
     logger.info(f"Received request: {data}")
 
-    # Validate input data
-    v = Validator(schema)
-    if not v.validate(data):
-        logger.error(f"Input validation failed: {v.errors}")
-        return jsonify({'error': 'Invalid input', 'details': v.errors}), 400
-
-    # Validate the request token
-    token = data.get('token')
-    if token != SECRET_TOKEN:
-        logger.warning(f"Unauthorized access attempt with token: {token}")
-        return jsonify({'error': 'Invalid token'}), 403
-
-    dns_name = data.get('dns_name')
-    ip_address = data.get('ip_address')
-    
-    # If IP address is missing, look it up using the DNS name and vice versa
-    if dns_name and not ip_address:
-        try:
-            ip_address = get_ip_address(dns_name)
-        except Exception as e:
-            logger.error(f"Failed to get IP address for DNS name {dns_name}: {e}")
-            return jsonify({'error': f'Failed to get IP address for DNS name {dns_name}'}), 400
-    elif ip_address and not dns_name:
-        try:
-            dns_name = get_host_name(ip_address)
-        except Exception as e:
-            logger.error(f"Failed to get DNS name for IP address {ip_address}: {e}")
-            return jsonify({'error': f'Failed to get DNS name for IP address {ip_address}'}), 400
+    dns_name, ip_address, status, error_response = check_data(data)
+    if status != 200:
+        return jsonify(error_response), status
     
     # Delete DNS record
     try:
@@ -177,6 +126,43 @@ def delete_dns():
 @app.route('/health', methods=['GET'])
 def health():
     return jsonify({'status': 'ok'}), 200
+
+def check_data(data):
+    # Validate input data
+    v = Validator(schema)
+    if not v.validate(data):
+        logger.error(f"Input validation failed: {v.errors}")
+        return None, None, 400, {'error': 'Invalid input', 'details': v.errors}
+
+    # Validate the request token
+    token = data.get('token')
+    if token != SECRET_TOKEN:
+        logger.warning(f"Unauthorized access attempt with token: {token}")
+        return None, None, 403, {'error': 'Invalid token'}
+
+    dns_name = data.get('dns_name')
+    ip_address = data.get('ip_address')
+
+    # Check if both IP address and DNS name are missing
+    if not dns_name and not ip_address:
+        logger.error("Both DNS name and IP address are missing")
+        return None, None, 400, {'error': 'Both DNS name and IP address are missing'}
+
+    # If IP address is missing, look it up using the DNS name
+    if dns_name and not ip_address:
+        try:
+            ip_address = get_ip_address(dns_name)
+        except Exception as e:
+            logger.error(f"Failed to get IP address for DNS name {dns_name}: {e}")
+            return None, None, 400, {'error': f'Failed to get IP address for DNS name {dns_name}'}
+    elif ip_address and not dns_name:
+        try:
+            dns_name = get_host_name(ip_address)
+        except Exception as e:
+            logger.error(f"Failed to get DNS name for IP address {ip_address}: {e}")
+            return None, None, 400, {'error': f'Failed to get DNS name for IP address {ip_address}'}
+
+    return dns_name, ip_address, 200, None
 
 if __name__ == '__main__':
     if not (AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY and HOSTED_ZONE_ID and SECRET_TOKEN):
